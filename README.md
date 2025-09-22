@@ -1,184 +1,227 @@
 # Laboratorio: Validación FHIR y Observabilidad a través de Kong (rate-limiting)
 
-Este laboratorio levanta un servidor HAPI FHIR y un Kong Gateway (modo DB-less) localmente con Docker. Permite:
+Este README describe, paso a paso y con mucho detalle, cómo reproducir el laboratorio en tu máquina local. Cubre:
 
-- Enviar un Observation inválido (valor no numérico en valueQuantity) a través del Gateway.
-- Invocar el operation $validate para obtener un OperationOutcome.
-- Crear un Patient y ejecutar $everything.
-- Forzar rate-limiting para obtener 429 y revisar logs.
+- Requisitos y comprobaciones previas.
+- Cómo levantar el entorno con Docker Compose.
+- Cómo probar los endpoints (por Gateway y directo a HAPI).
+- Qué hacen los scripts incluidos (`setup.sh`, `tests.sh`, `inject.sh`, `kong-setup.sh`).
+- Cómo interpretar las respuestas y logs (incluyendo OperationOutcome y 429).
+- Cómo limpiar el entorno por completo (detener y eliminar contenedores, imágenes y redes).
 
-Requisitos previos
-- Docker y docker-compose.
-- curl, jq (en el host) o usar el contenedor `client` provisto.
+IMPORTANTE: los comandos aquí asumen que trabajas sobre la carpeta del repositorio: `/media/caertos/DC/ProyectosWeb/docker/Parcial1`.
 
-Archivos en este directorio
-- `docker-compose.yml` - levanta HAPI, Kong (DB-less) y un contenedor cliente.
-- `kong.yml` - configuración declarative de Kong (service/route/plugin rate-limiting).
-- `setup.sh` - script para levantar los servicios.
-- `kong-setup.sh` - alternativa para configurar Kong via Admin API dinámicamente.
-- `tests.sh` - script de pruebas: POST inválido, $validate, crear patient, ejecutar $everything, forzar rate-limit.
-- `invalid_observation.json` - Observation inválido provisto por el enunciado.
-- `patient.json` - recurso Patient de ejemplo.
-- `apigee-policy-sample.xml` - ejemplo de policy para Apigee (alternativa).
+Índice
+1) Requisitos
+2) Preparar el repositorio
+3) Levantar el laboratorio (paso a paso)
+4) Probar manualmente endpoints (comandos y qué buscar)
+5) Ejecutar el flujo automático (`tests.sh`) y entender la salida
+6) Hacer inyección masiva con `inject.sh` (opcional)
+7) Logs y troubleshooting detallado
+8) Ajustar límites (si necesitas menos 429)
+9) Limpieza completa (stop + remove images etc.)
 
-Pasos rápidos
+---------------------------------------------------------------------------------------------------
 
-1) Levantar el laboratorio:
+1) Requisitos
 
-```bash
-chmod +x setup.sh kong-setup.sh tests.sh
-./setup.sh
-```
-
-2) (Opcional) Si prefiere configurar Kong dinámicamente en lugar de usar `kong.yml` (DB-less):
+- Docker (motor) y Docker Compose v2 (o docker-compose). Comprueba:
 
 ```bash
-./kong-setup.sh
+docker info >/dev/null && echo "Docker OK" || echo "Docker no disponible"
+docker compose version || docker-compose version
 ```
 
-3) Ejecutar pruebas:
+- `curl` y `jq` en el host son muy útiles para formatear JSON. Comprueba:
+
+```bash
+curl --version
+jq --version
+```
+
+Si no tienes `jq`, instálalo (Ubuntu/Debian):
+
+```bash
+sudo apt update
+sudo apt install -y jq
+```
+
+2) Preparar el repositorio
+
+Desde la ruta del laboratorio:
+
+```bash
+cd /media/caertos/DC/ProyectosWeb/docker/Parcial1
+# Dar permisos de ejecución a los scripts
+chmod +x setup.sh kong-setup.sh tests.sh inject.sh
+```
+
+3) Levantar el laboratorio (paso a paso)
+
+1. Inicia el stack con Docker Compose (modo detached):
+
+```bash
+docker compose up -d --remove-orphans
+```
+
+Qué esperar:
+- Docker descargará imágenes si no están presentes.
+- Debes ver contenedores: `hapi_fhir`, `kong_gateway`, `fhir_client`.
+
+Verifica estado:
+
+```bash
+docker compose ps
+docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+```
+
+Si Kong tardase en estar listo, espera unos segundos y vuelve a comprobar.
+
+4) Probar manualmente endpoints
+
+Objetivo: comprobar que HAPI responde directamente y que Kong está proxying correctamente por `/fhir`.
+
+- Probar HAPI directo:
+
+```bash
+curl -s http://localhost:8080/fhir/metadata | jq
+```
+
+Salida esperada: JSON con resourceType CapabilityStatement.
+
+- Probar vía Kong (proxy):
+
+```bash
+curl -s http://localhost:8000/fhir/metadata | jq
+```
+
+Si `jq` lanza un error de parseo, usa `curl -i` para inspeccionar cabeceras:
+
+```bash
+curl -i http://localhost:8000/fhir/metadata | sed -n '1,200p'
+```
+
+Cabeceras importantes:
+- `Content-Type` (debe ser application/fhir+json o application/fhir+xml).
+- `X-Kong-Upstream-Latency` y `X-Kong-Proxy-Latency` para medir latencias.
+
+5) Ejecutar el flujo automático (`tests.sh`)
+
+`tests.sh` realiza 5 pasos: POST inválido, $validate, crear Patient, $everything, forzar rate-limit.
 
 ```bash
 ./tests.sh
 ```
 
-Cómo ejecutar `inject.sh` (inyección masiva de recursos)
------------------------------------------------------
+Explicación detallada de lo que hace y qué salida verás:
 
-`inject.sh` permite inyectar una serie de recursos (Patients + Observations) a través del Gateway para stress testing y validación. Por defecto inyecta 50 recursos y guarda un registro en `/tmp/fhir_inject_results.csv`.
+- Paso 1: POST `/fhir/Observation` con `invalid_observation.json`.
+  - Esperado: HTTP 400 y un `OperationOutcome` explicando que `valueQuantity.value` no es numérico.
 
-Requisitos: `curl` y `jq` en el host (si no los tiene, puede ejecutar el script dentro del contenedor `fhir_client` con una imagen que tenga estas utilidades).
+- Paso 2: POST `/fhir/Observation/$validate` con el mismo body.
+  - Esperado: HTTP 400 y `OperationOutcome` de validación.
 
-Ejemplos:
+- Paso 3: Crear un `Patient` vía gateway. Si Kong aplica rate-limit y devuelve `429`, el script reintenta directamente contra HAPI (`http://localhost:8080/fhir`).
+  - Salida útil: verás el `id` creado. Ejemplo: `Patient creado con id: 2`.
 
-1) Dar permiso de ejecución:
+- Paso 4: Invocar `GET /fhir/Patient/{id}/$everything` y mostrar headers + body (Bundle).
 
-```bash
-chmod +x inject.sh
-```
+- Paso 5: Forzar rate-limiter: se lanzan 30 requests concurrentes a `/fhir/Patient/{id}`.
+  - Salida esperada: varios `429` (dependiendo del límite en `kong.yml`).
 
-2) Ejecutar (50 por defecto):
+Si quieres ver en detalle las respuestas intermedias, revisa los archivos temporales que el script crea en `/tmp` (por ejemplo `/tmp/resp.txt`, `/tmp/validate_resp.txt`, `/tmp/resp2.txt`, `/tmp/everything_body.txt`, `/tmp/rate_results.txt`).
 
-```bash
-./inject.sh
-```
+6) Inyección masiva con `inject.sh` (opcional)
 
-3) Ejecutar con número de recursos distinto (por ejemplo 100):
-
-```bash
-./inject.sh 100
-```
-
-Salida y análisis rápido
-- Archivo de registro: `/tmp/fhir_inject_results.csv` con columnas: index,patient_id,http_status
-
-Comandos útiles:
+Este script crea N pacientes y para cada uno crea Observations, dejando cada 5º Observation inválido. Uso:
 
 ```bash
-# Ver últimas 10 entradas
-tail -n 10 /tmp/fhir_inject_results.csv
-
-# Resumen por código HTTP
-tail -n +2 /tmp/fhir_inject_results.csv | awk -F, '{print $3}' | sort | uniq -c | sort -rn
-
-# Ver índices con error (no 200/201)
-awk -F, '$3!~/(200|201)/{print $0}' /tmp/fhir_inject_results.csv
-
-# Revisar body de respuesta de un índice concreto (ej: 5)
-cat /tmp/obs_resp_5.json | jq '.' || cat /tmp/obs_resp_5.json
+./inject.sh 50
 ```
 
-Ejecución dentro del contenedor `fhir_client` (opcional)
-- Copiar los archivos y ejecutar dentro del contenedor si el host no tiene `jq`:
+Registros:
+- `/tmp/fhir_inject_results.csv` con `index,patient_id,http_status`.
+- Respuestas de cada Observation en `/tmp/obs_resp_<index>.json`.
 
-```bash
-docker cp . fhir_client:/workdir
-docker exec -it fhir_client sh -c "cd /workdir && chmod +x inject.sh && ./inject.sh 50"
-```
+7) Logs y troubleshooting detallado
 
-- Nota: algunas imágenes de `curl` no incluyen `jq` ni `bash`. Si lo necesitas, puedes usar una imagen `ubuntu` o `alpine` con herramientas instaladas.
-
-Parámetros y ajustes dentro del script
-- `inject.sh` acepta un argumento: número de recursos a generar.
-- El script inserta un Observation inválido cada 5º registro por defecto; puedes cambiar la lógica dentro del script si quieres otro patrón.
-- Ajusta la pausa `sleep 0.05` para controlar la velocidad de inyección y provocar o evitar que el rate-limiter se dispare.
-
-Interpretación práctica
-- 201/200: inserción exitosa.
-- 400 u OperationOutcome: validación fallida (tal como buscamos en este laboratorio).
-- 429: Kong ha limitado tráfico — revisar logs de Kong y header `Retry-After`.
-
-
-Comandos explicados y outputs esperados
-
-- POST /fhir/Observation (vía Gateway): HTTP 400 o 201 con OperationOutcome. Ejemplo esperado:
-
-  - Código HTTP: 400
-  - Body: OperationOutcome con entradas que describen que `valueQuantity.value` no es numérico.
-
-  Fragmento de OperationOutcome esperado (ejemplo):
-
-  {
-    "resourceType": "OperationOutcome",
-    "issue": [
-      {
-        "severity": "error",
-        "code": "invalid",
-        "diagnostics": "Invalid value for element valueQuantity.value: expected number"
-      }
-    ]
-  }
-
-- POST /fhir/Observation/$validate: devuelve OperationOutcome con errores de validación.
-
-- GET /fhir/Patient/{id}/$everything: devuelve un `Bundle` o un error si no hay recursos.
-
-- Forzar rate limit: con la configuración `minute: 5` (en `kong.yml`) hacemos 30 peticiones concurrentes; se esperan varias respuestas `429`.
-
-Ver logs
-
-- Logs de Kong (proxy/admin) visibles vía docker logs:
+- Ver logs de Kong y HAPI:
 
 ```bash
 docker logs -f kong_gateway
 docker logs -f hapi_fhir
 ```
 
-- Filtrar accesos 429 en logs de Kong:
+- Si Kong devuelve `502 Bad Gateway` con body `{"message":"An invalid response was received from the upstream server"}`:
+  - Comprueba que la ruta enviada al upstream es correcta (por ejemplo, que Kong no esté eliminando `/fhir` al reenviar). En `kong.yml` la opción `strip_path: false` asegura que Kong reenvíe `/fhir/metadata` como `/fhir/metadata` al backend.
 
-```bash
-docker logs kong_gateway 2>&1 | grep " 429 " || true
+- Si recibes `429 Too Many Requests` en operaciones de creación:
+  - Revisa el header `Retry-After` y el plugin rate-limiting en `kong.yml`.
+  - Opciones para pruebas: reducir temporalmente la configuración `minute` o comentar el plugin.
+
+- Si HAPI devuelve `404` en rutas directas (ej. `/Patient` en lugar de `/fhir/Patient`):
+  - Usa siempre `/fhir` prefix cuando haces requests directos al contenedor HAPI en este laboratorio (HAPI expone recursos en `/fhir`).
+
+8) Ajustar límites de Kong (para demo sin 429)
+
+Edita `kong.yml` y ajusta/elimina el plugin `rate-limiting`. Ejemplo para reducir el efecto:
+
+```yaml
+plugins:
+  - name: rate-limiting
+    service: hapi-fhir-service
+    config:
+      minute: 1000
+      policy: local
+      limit_by: consumer
+      fault_tolerant: false
 ```
 
-- En HAPI FHIR logs se esperan entradas indicando validación fallida. Buscar `Validation` o `OperationOutcome`:
+Luego reinicia Kong:
 
 ```bash
-docker logs hapi_fhir 2>&1 | grep -i "validation" || true
-docker logs hapi_fhir 2>&1 | grep -i "operationoutcome" || true
+docker restart kong_gateway
 ```
 
-Criterios de aceptación
+9) Limpieza completa (detener y eliminar todo)
 
-1) POST del Observation inválido (vía Gateway) devuelve `400` o `OperationOutcome`. (tests.sh chequea esto y muestra body).
-2) POST a `$validate` devuelve `OperationOutcome` con detalles. (tests.sh imprime la respuesta).
-3) Tras suficientes solicitudes concurrentes, Kong devuelve `429`. (tests.sh cuenta códigos y muestra 429 si aparecen).
+Si quieres eliminar todo lo que el laboratorio creó (contenedores, imágenes descargadas, red), sigue estos pasos desde la carpeta del proyecto:
 
-Troubleshooting
+```bash
+# 1) Parar y remover contenedores y red del compose
+docker compose down --remove-orphans
 
-- Si no aparecen 429:
-  - Bajar los límites en `kong.yml` (por ejemplo `minute: 2`) y reiniciar Kong.
-  - Asegurarse de que la ruta usada por tests es exactamente `/fhir` (proxy prefix).
+# 2) Listar contenedores relacionados (si aún existen)
+docker ps -a --filter "name=hapi_fhir" --filter "name=kong_gateway" --filter "name=fhir_client"
 
-- Si HAPI responde 404 desde Kong:
-  - Verifique que `services[0].url` en `kong.yml` apunte a `http://hapi:8080` y que el contenedor `hapi` esté sano.
+# 3) Eliminar contenedores manualmente (si quedaran)
+docker rm -f kong_gateway hapi_fhir fhir_client || true
 
-- Si $everything devuelve 500 o error:
-  - Asegúrese que el Patient tiene recursos vinculados (Observation creado con subject correcto).
+# 4) Eliminar imágenes descargadas (advertencia: esto borra las imágenes locales)
+docker image rm -f hapiproject/hapi:latest kong:3.3 curlimages/curl:7.88.1 || true
 
-Apigee (alternativa)
+# 5) (Opcional) eliminar volúmenes huérfanos y redes
+docker volume prune -f || true
+docker network rm parcial1_default || true
+```
 
-Si quisiera aplicar la misma limitación en Apigee Edge/Apigee X, aquí hay dos políticas ejemplares (Quota y SpikeArrest). No se pueden ejecutar localmente sin una cuenta Apigee.
+Notas importantes sobre limpieza:
+- `docker image rm -f` eliminará las imágenes locales; si las necesitas después, Docker las volverá a descargar al levantar el compose.
+- No ejecutes `docker system prune -a` a menos que quieras eliminar absolutamente todo en tu host.
 
-Archivo de ejemplo: `apigee-policy-sample.xml`
+---------------------------------------------------------------------------------------------------
 
----
+Ejemplo de sesión (resumida) que ejecuté durante la comprobación del laboratorio
+
+1) Levanté el stack:
+
+```bash
+docker compose up -d --remove-orphans
+```
+
+2) Comprobé `/fhir/metadata` vía Kong y HAPI directo. Inicialmente obtuve 502 porque Kong estaba recortando la ruta; corregí `kong.yml` para incluir `strip_path: false` y reinicié Kong.
+
+3) Ejecuté `./tests.sh` y obtuve: POST inválido -> 400 (OperationOutcome), $validate -> 400 (OperationOutcome), creación de Patient -> falló vía Gateway por 429 (rate-limit), pero el script reintento contra HAPI directo y creó el Patient, `$everything` devolvió un Bundle, y las 30 requests concurrentes produjeron 429 (efecto rate-limiting).
+
+Si necesitas que haga cualquiera de las acciones de limpieza ahora (detener el stack y eliminar imágenes), confirmámelo y lo ejecuto inmediatamente.

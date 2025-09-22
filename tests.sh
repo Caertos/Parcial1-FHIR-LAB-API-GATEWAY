@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GATEWAY=${GATEWAY:-http://localhost:8000/fhir}
-HAPI_DIRECT=${HAPI_DIRECT:-http://localhost:8080}
+# HAPI exposes FHIR under /fhir path
+HAPI_DIRECT=${HAPI_DIRECT:-http://localhost:8080/fhir}
 
 echo "1) POST invalid Observation via Gateway -> esperar 400 o OperationOutcome"
 HTTP_STATUS=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST "$GATEWAY/Observation" \
@@ -29,7 +30,7 @@ echo "Body:"
 cat /tmp/validate_resp.txt | jq || cat /tmp/validate_resp.txt
 
 echo
-echo "3) Crear Patient y reintentar Observation (si necesita $everything)"
+echo "3) Crear Patient y reintentar Observation (si necesita \$everything)"
 PID=$(curl -s -X POST "$GATEWAY/Patient" -H "Content-Type: application/fhir+json" --data-binary @"$ROOT_DIR/patient.json" | jq -r '.id // .resource.id // empty')
 if [[ -z "$PID" ]]; then
   echo "No se obtuvo ID de Patient. Intentando con HAPI directo..."
@@ -39,7 +40,7 @@ echo "Patient creado con id: $PID"
 
 echo "Actualizar Observation inválido para referenciar patient y reintentar creación (esperamos aún error por valueQuantity)"
 TMP_OBS=$(mktemp)
-jq --arg pid "$PID" '.subject = {"reference":"Patient/" + $pid}' "$ROOT_DIR/invalid_observation.json" > $TMP_OBS
+jq --arg pid "$PID" '.subject = {"reference": ("Patient/" + $pid)}' "$ROOT_DIR/invalid_observation.json" > $TMP_OBS
 HTTP_STATUS=$(curl -s -o /tmp/resp2.txt -w "%{http_code}" -X POST "$GATEWAY/Observation" -H "Content-Type: application/fhir+json" --data-binary @$TMP_OBS)
 echo "HTTP status: $HTTP_STATUS"
 cat /tmp/resp2.txt | jq || cat /tmp/resp2.txt
