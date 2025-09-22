@@ -210,18 +210,3 @@ Notas importantes sobre limpieza:
 - `docker image rm -f` eliminará las imágenes locales; si las necesitas después, Docker las volverá a descargar al levantar el compose.
 - No ejecutes `docker system prune -a` a menos que quieras eliminar absolutamente todo en tu host.
 
----------------------------------------------------------------------------------------------------
-
-Ejemplo de sesión (resumida) que ejecuté durante la comprobación del laboratorio
-
-1) Levanté el stack:
-
-```bash
-docker compose up -d --remove-orphans
-```
-
-2) Comprobé `/fhir/metadata` vía Kong y HAPI directo. Inicialmente obtuve 502 porque Kong estaba recortando la ruta; corregí `kong.yml` para incluir `strip_path: false` y reinicié Kong.
-
-3) Ejecuté `./tests.sh` y obtuve: POST inválido -> 400 (OperationOutcome), $validate -> 400 (OperationOutcome), creación de Patient -> falló vía Gateway por 429 (rate-limit), pero el script reintento contra HAPI directo y creó el Patient, `$everything` devolvió un Bundle, y las 30 requests concurrentes produjeron 429 (efecto rate-limiting).
-
-Si necesitas que haga cualquiera de las acciones de limpieza ahora (detener el stack y eliminar imágenes), confirmámelo y lo ejecuto inmediatamente.
