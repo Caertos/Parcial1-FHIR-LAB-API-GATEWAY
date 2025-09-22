@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  hapi:
+    image: hapiproject/hapi:latest
+    container_name: hapi_fhir
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    # Nota: la imagen publica expone el servidor HAPI en el puerto 8080.
+    # Si su imagen usa un context-path distinto (p.ej. /hapi-fhir-jpaserver), ajuste la ruta en el proxy de Kong o cambie la URL del service.
+
+  kong:
+    image: kong:3.3
+    container_name: kong_gateway
+    depends_on:
+      - hapi
+    ports:
+      - "8000:8000" # proxy
+      - "8001:8001" # admin
+    environment:
+      - KONG_DATABASE=off
+      - KONG_DECLARATIVE_CONFIG=/usr/local/kong/declarative/kong.yml
+      - KONG_PROXY_ACCESS_LOG=/dev/stdout
+      - KONG_ADMIN_ACCESS_LOG=/dev/stdout
+      - KONG_PROXY_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_ERROR_LOG=/dev/stderr
+    volumes:
+      - ./kong.yml:/usr/local/kong/declarative/kong.yml:ro
+    restart: unless-stopped
+
+  client:
+    image: curlimages/curl:7.88.1
+    container_name: fhir_client
+    depends_on:
+      - kong
+    tty: true
+    entrypoint: ["sleep", "infinity"]
+
+  # Optional: Postgres for Kong (if prefiere usar Kong con DB). Está comentado por defecto.
+  # postgres:
+  #   image: postgres:13
+  #   environment:
+  #     POSTGRES_USER: kong
+  #     POSTGRES_DB: kong
+  #     POSTGRES_PASSWORD: kong
+  #   volumes:
+  #     - kong_pgdata:/var/lib/postgresql/data
+
+#volumes:
+#  kong_pgdata:

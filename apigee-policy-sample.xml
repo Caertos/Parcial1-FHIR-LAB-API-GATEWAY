@@ -1,0 +1,15 @@
+<!-- SpikeArrest example: limita a 5 requests por minuto -->
+<SpikeArrest async="false" continueOnError="false" enabled="true" name="SpikeArrest-5-per-minute">
+  <DisplayName>Spike Arrest 5/min</DisplayName>
+  <Properties/>
+  <Identifier ref="request.header.apigee-client-id"/>
+  <Rate>5pm</Rate>
+</SpikeArrest>
+
+<!-- Quota example: 10 requests per minute with an HTTP header identifier -->
+<Quota name="Quota-10-per-minute" continueOnError="false" enabled="true" type="standard">
+  <DisplayName>Quota 10 per minute</DisplayName>
+  <Allow count="10" countRef="request.header.client-id"/>
+  <Interval>1</Interval>
+  <TimeUnit>minute</TimeUnit>
+</Quota>

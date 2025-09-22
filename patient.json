@@ -1,0 +1,5 @@
+{
+  "resourceType": "Patient",
+  "name": [{"family": "Test", "given": ["Paciente"]}],
+  "gender": "unknown"
+}
