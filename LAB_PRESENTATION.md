@@ -101,5 +101,3 @@ seq 1 30 | xargs -n1 -P10 -I{} curl -s -o /dev/null -w "%{http_code}\n" http://l
 - Documentación Kong: https://docs.konghq.com
 - HAPI FHIR: https://hapifhir.io
 - FHIR R4 spec: https://www.hl7.org/fhir/
-
-Usa este `LAB_PRESENTATION.md` como guión para presentar el laboratorio o como notas para un taller. Ajusta tiempos y comandos según la audiencia y el entorno.
