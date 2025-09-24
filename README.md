@@ -1,6 +1,6 @@
 # Laboratorio: Validación FHIR y Observabilidad a través de Kong (rate-limiting)
 
-Este README describe, paso a paso y con mucho detalle, cómo reproducir el laboratorio en tu máquina local. Cubre:
+Este laboratorio cubre:
 
 - Requisitos y comprobaciones previas.
 - Cómo levantar el entorno con Docker Compose.
