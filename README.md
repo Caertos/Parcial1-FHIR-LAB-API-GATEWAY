@@ -9,8 +9,6 @@ Este laboratorio cubre:
 - Cómo interpretar las respuestas y logs (incluyendo OperationOutcome y 429).
 - Cómo limpiar el entorno por completo (detener y eliminar contenedores, imágenes y redes).
 
-IMPORTANTE: los comandos aquí asumen que trabajas sobre la carpeta del repositorio: `/media/caertos/DC/ProyectosWeb/docker/Parcial1`.
-
 Índice
 1) Requisitos
 2) Preparar el repositorio
@@ -52,7 +50,7 @@ sudo apt install -y jq
 Desde la ruta del laboratorio:
 
 ```bash
-cd /media/caertos/DC/ProyectosWeb/docker/Parcial1
+cd /tu-ruta/
 # Dar permisos de ejecución a los scripts
 chmod +x setup.sh kong-setup.sh tests.sh inject.sh
 ```
